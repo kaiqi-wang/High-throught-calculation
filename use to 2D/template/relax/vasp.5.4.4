@@ -1,0 +1,47 @@
+#!/bin/bash
+#PBS -N name
+#PBS -l nodes=1:ppn=16
+#PBS -m abe
+#PBS -j n
+##PBS -o job.log
+##PBS -e job.err
+#PBS -l walltime=250:00:00
+cd $PBS_O_WORKDIR 
+
+(echo "1";echo "103") | vaspkit.1.12 >> potcar.log
+rm ./potcar.log
+
+# relax calculation
+date "+01 Today's date is: %D. The time execution %T" >> time.info
+mpirun -np 16 /opt/linux/vasp.5.4.4/vasp.5.4.4/bin/vasp_std  > log
+date "+02 Today's date is: %D. The time finish %T" >> time.info
+
+i=0
+until ((i > 6))
+do
+reached=$(grep "reached required accuracy" log)
+if [ -z "$reached" ]; then
+	echo "Please exam the results and determine if you can continue to claculate" >> $name.log
+	continue=$(grep "please rerun with smaller EDIFF, or copy CONTCAR" log)
+	if [ -z "$continue" ]; then
+		echo "Your calculation has been stoped and please exam the structure carefully" >> $name.log
+		((i=i+5))
+	else
+		echo "Please copy CONTCAR to POSCAR and continue" >> $name.log
+		mv log log_$i
+		cp ./CONTCAR ./POSCAR
+                                mpirun -np 16 /opt/linux/vasp.5.4.4/vasp.5.4.4/bin/vasp_std  > log
+		((i++))
+	fi
+else
+	echo "reached required accuracy - stopping structure energy minimisation" >> $name.log
+	# scf calculation
+	cp ./CONTCAR ../scf/POSCAR && cp ./POTCAR ../scf/ && cd ../scf/
+	mpirun -np 16 /opt/linux/vasp.5.4.4/vasp.5.4.4/bin/vasp_std  > log
+	# band calculation
+	cp ./CONTCAR ../band/POSCAR && cp ./POTCAR ../band/ && cd ../band/ && ln -s ../scf/WAVECAR .
+	mpirun -np 16 /opt/linux/vasp.5.4.4/vasp.5.4.4/bin/vasp_std  > log
+	bash ./plot.sh
+	mv ./Projected_Band.png ./$name.png
+fi
+done
